@@ -4,7 +4,7 @@ from sentinel.database.repositories import IncidentNotFoundError, IncidentReposi
 from sentinel.domain.enums import CategorySource, IncidentCategory, Severity, SeveritySource
 from sentinel.schemas.incident import CorrectiveAction, IncidentUpdate, ReviewerNote
 from sentinel.services.incident_service import IncidentService
-from sentinel.ui.components import badge, label, safe_error, status_options
+from sentinel.ui.components import badge, escape_markdown, label, safe_error, status_options
 from sentinel.time_utils import display_local
 
 
@@ -21,7 +21,9 @@ def render(repository: IncidentRepository, service: IncidentService) -> None:
         return
     st.caption(f"{incident.incident_id} · Reported {incident.report_date.isoformat()} · Updated {display_local(incident.updated_at)}")
     columns = st.columns([3, 1, 1])
-    columns[0].subheader(incident.title)
+    # The title is reporter-supplied: escape it so Markdown constructs in the
+    # text (links, images) render literally instead of loading remote content.
+    columns[0].subheader(escape_markdown(incident.title))
     with columns[1]:
         st.caption("Status")
         badge(incident.status, "status")
@@ -39,16 +41,16 @@ def render(repository: IncidentRepository, service: IncidentService) -> None:
             st.caption("Category")
             st.write(label(incident.category))
             st.caption("Affected AI system")
-            st.write(incident.affected_system or "Not provided")
+            st.write(escape_markdown(incident.affected_system) or "Not provided")
             st.caption("Provider")
-            st.write(incident.provider or "Not provided")
+            st.write(escape_markdown(incident.provider) or "Not provided")
         with right:
             st.caption("Occurrence date")
             st.write(incident.occurrence_date.isoformat() if incident.occurrence_date else "Not provided")
             st.caption("Affected population")
-            st.write(incident.affected_population or "Not provided")
+            st.write(escape_markdown(incident.affected_population) or "Not provided")
             st.caption("Potential impact")
-            st.write(incident.potential_impact or "Not provided")
+            st.write(escape_markdown(incident.potential_impact) or "Not provided")
             st.caption("Resolution summary")
             st.text(incident.resolution_summary or "Unknown / not applicable")
         references = repository.list_evidence_references(incident.incident_id)
@@ -63,7 +65,8 @@ def render(repository: IncidentRepository, service: IncidentService) -> None:
         if notes:
             st.subheader("Reviewer notes")
             for note in notes:
-                st.markdown(f"**{note.author or 'Unattributed reviewer'}** · {display_local(note.created_at)}")
+                # The author name is reviewer-supplied; escape the whole line.
+                st.markdown(f"**{escape_markdown(note.author or 'Unattributed reviewer')}** · {display_local(note.created_at)}")
                 st.text(note.body)
         actions = repository.list_corrective_actions(incident.incident_id)
         if actions:

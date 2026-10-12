@@ -4,7 +4,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from sentinel.database.connection import database_connection
+from sentinel.database.connection import DatabaseError, database_connection
 from sentinel.database.schema import initialize_schema
 from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus
 from sentinel.domain.lifecycle import validate_transition
@@ -48,6 +48,51 @@ def _dt(value: str) -> datetime:
 
 def _date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
+
+
+def _comparable(value: Any) -> Any:
+    """Normalize a stored field so it can be compared against a serialized change."""
+    value = getattr(value, "value", value)
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _model_limit(field: str) -> int:
+    for constraint in AuditEvent.model_fields[field].metadata:
+        if hasattr(constraint, "max_length"):
+            return int(constraint.max_length)
+    raise RuntimeError(f"AuditEvent.{field} declares no max_length constraint")
+
+
+AUDIT_DETAILS_MAX = _model_limit("details")
+AUDIT_ACTOR_MAX = _model_limit("actor")
+
+
+def _clip(value: str | None, limit: int) -> str | None:
+    """Keep a value inside its schema limit so long free text cannot make reads fail."""
+    if value is None or len(value) <= limit:
+        return value
+    return value[: max(limit - 1, 0)] + "…"
+
+
+#: Whitelisted ORDER BY expressions. Keys are validated before use, so no user
+#: input ever reaches the SQL text.
+SORT_EXPRESSIONS: dict[str, str] = {
+    "created_at": "created_at",
+    "updated_at": "updated_at",
+    "report_date": "report_date",
+    "title": "title",
+    "severity": (
+        "CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 "
+        "WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END"
+    ),
+    "status": (
+        "CASE status WHEN 'submitted' THEN 1 WHEN 'under_review' THEN 2 "
+        "WHEN 'action_required' THEN 3 WHEN 'resolved' THEN 4 "
+        "WHEN 'closed' THEN 5 ELSE 0 END"
+    ),
+}
 
 
 def _incident_from_row(row: sqlite3.Row) -> Incident:
@@ -101,7 +146,7 @@ class IncidentRepository:
     ) -> None:
         connection.execute(
             "INSERT INTO audit_events(incident_id, event_type, actor, details, created_at) VALUES (?, ?, ?, ?, ?)",
-            (incident_id, event_type, actor, details, now),
+            (incident_id, event_type, _clip(actor, AUDIT_ACTOR_MAX), _clip(details, AUDIT_DETAILS_MAX), now),
         )
 
     def create_incident(
@@ -130,7 +175,15 @@ class IncidentRepository:
                 [(incident_id, reference) for reference in payload.evidence_references],
             )
             self._add_event(connection, incident_id, "incident_created", actor, "Incident submitted", now)
-        return self.get_incident(incident_id)
+            # Read back inside the same transaction: if this read fails the
+            # insert rolls back instead of reporting "not created" for a
+            # record that actually exists (which would invite a duplicate).
+            row = connection.execute(
+                "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+            ).fetchone()
+            if row is None:
+                raise DatabaseError("Database operation failed")
+        return _incident_from_row(row)
 
     def get_incident(self, incident_id: str) -> Incident:
         with database_connection(self.database_path) as connection:
@@ -177,7 +230,7 @@ class IncidentRepository:
         offset: int = 0,
     ) -> tuple[list[Incident], int]:
         """Search safely using a fixed set of sortable database columns."""
-        if sort_by not in {"created_at", "updated_at", "report_date", "title", "severity", "status"}:
+        if sort_by not in SORT_EXPRESSIONS:
             raise ValueError("Unsupported incident sort field")
         if not 1 <= limit <= 500 or offset < 0:
             raise ValueError("limit must be between 1 and 500 and offset cannot be negative")
@@ -199,10 +252,11 @@ class IncidentRepository:
             values.append(date_to.isoformat())
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         direction = "DESC" if descending else "ASC"
+        order_by = f"{SORT_EXPRESSIONS[sort_by]} {direction}"
         with database_connection(self.database_path) as connection:
             total = int(connection.execute(f"SELECT COUNT(*) FROM incidents{where}", values).fetchone()[0])
             rows = connection.execute(
-                f"SELECT * FROM incidents{where} ORDER BY {sort_by} {direction} LIMIT ? OFFSET ?",
+                f"SELECT * FROM incidents{where} ORDER BY {order_by}, incident_id DESC LIMIT ? OFFSET ?",
                 (*values, limit, offset),
             ).fetchall()
         return [_incident_from_row(row) for row in rows], total
@@ -241,28 +295,48 @@ class IncidentRepository:
         disallowed = set(serialized) - ALLOWED_UPDATE_COLUMNS
         if disallowed:
             raise ValueError(f"Disallowed update fields: {disallowed}")
-        serialized["updated_at"] = utc_iso()
-        assignments = ", ".join(f"{key} = ?" for key in serialized)
+        # Drop fields whose value is already stored: an audit event must describe
+        # an actual change, and a no-op save must not bump `updated_at`.
+        effective = {
+            key: value for key, value in serialized.items()
+            if value != _comparable(getattr(current, key))
+        }
+        if not effective:
+            return current
+        effective["updated_at"] = utc_iso()
+        assignments = ", ".join(f"{key} = ?" for key in effective)
         with database_connection(self.database_path) as connection:
             cursor = connection.execute(
                 f"UPDATE incidents SET {assignments} WHERE incident_id = ?",
-                (*serialized.values(), incident_id),
+                (*effective.values(), incident_id),
             )
             if cursor.rowcount != 1:
                 raise IncidentNotFoundError(f"Incident {incident_id} was not found")
             safe_fields = {"category", "category_source", "severity", "severity_source", "assigned_reviewer", "resolution_summary"}
             audit_values = []
-            for field in changes:
+            for field in effective:
+                if field == "updated_at":
+                    continue
                 if field in safe_fields:
                     before = getattr(current, field)
                     before_value = getattr(before, "value", before) or "not set"
-                    after_value = serialized[field] or "not set"
+                    after_value = effective[field] or "not set"
                     audit_values.append(f"{field}: {before_value} -> {after_value}")
                 else:
                     audit_values.append(field)
+            # Free-text fields are capped at their schema limit, so clip the
+            # assembled detail or `list_audit_events` would fail validation.
             self._add_event(connection, incident_id, "incident_updated", actor,
-                            f"Updated: {'; '.join(audit_values)}", serialized["updated_at"])
-        return self.get_incident(incident_id)
+                            _clip(f"Updated: {'; '.join(audit_values)}", AUDIT_DETAILS_MAX),
+                            effective["updated_at"])
+            # Read back inside the same transaction so the caller can never see
+            # a false "update failed" for a change that actually persisted.
+            row = connection.execute(
+                "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+            ).fetchone()
+            if row is None:
+                raise DatabaseError("Database operation failed")
+        return _incident_from_row(row)
 
     def transition_status(self, incident_id: str, target: IncidentStatus, actor: str | None = None) -> Incident:
         current = self.get_incident(incident_id)
@@ -275,7 +349,12 @@ class IncidentRepository:
                 raise IncidentNotFoundError(f"Incident {incident_id} was not found")
             self._add_event(connection, incident_id, "status_changed", actor,
                             f"{current.status.value} -> {target.value}", now)
-        return self.get_incident(incident_id)
+            row = connection.execute(
+                "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+            ).fetchone()
+            if row is None:
+                raise DatabaseError("Database operation failed")
+        return _incident_from_row(row)
 
     def list_evidence_references(self, incident_id: str) -> list[str]:
         with database_connection(self.database_path) as connection:
@@ -327,8 +406,12 @@ class IncidentRepository:
     def list_audit_events(self, incident_id: str) -> list[AuditEvent]:
         with database_connection(self.database_path) as connection:
             rows = connection.execute("SELECT * FROM audit_events WHERE incident_id = ? ORDER BY created_at, id", (incident_id,)).fetchall()
-        return [AuditEvent(incident_id=row["incident_id"], event_type=row["event_type"], actor=row["actor"],
-                           details=row["details"], created_at=_dt(row["created_at"])) for row in rows]
+        # Clip on read as well: rows written before the write-side cap was added
+        # must still render instead of failing Pydantic validation.
+        return [AuditEvent(incident_id=row["incident_id"], event_type=row["event_type"],
+                           actor=_clip(row["actor"], AUDIT_ACTOR_MAX),
+                           details=_clip(row["details"], AUDIT_DETAILS_MAX),
+                           created_at=_dt(row["created_at"])) for row in rows]
 
     def list_ai_assessments(self, incident_id: str) -> list[AIAssessment]:
         with database_connection(self.database_path) as connection:

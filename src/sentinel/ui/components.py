@@ -1,11 +1,32 @@
 from collections.abc import Callable
 import html
+import re
 
 import streamlit as st
 
 from sentinel.domain.enums import IncidentCategory, IncidentStatus
 from sentinel.schemas.incident import Incident
 from sentinel.time_utils import display_local
+
+
+#: Characters with structural meaning in GitHub-flavored Markdown. Escaping
+#: them renders untrusted text literally instead of letting reporter-supplied
+#: content become headings, links, images, or inline HTML.
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|>~<])")
+
+
+def escape_markdown(value: object | None) -> str:
+    """Neutralise Markdown control characters in untrusted text.
+
+    Streamlit renders ``st.write``/``st.markdown``/``st.subheader`` input as
+    Markdown, so a report title, note author, or AI suggestion containing e.g.
+    ``![x](https://example.invalid/track.png)`` would otherwise load remote
+    content in the reviewer's browser. Escaping keeps the text legible while
+    removing that channel.
+    """
+    if value is None:
+        return ""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", str(value))
 
 
 def label(value: object | None) -> str:

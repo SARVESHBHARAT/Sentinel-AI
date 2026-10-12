@@ -1,12 +1,12 @@
 import streamlit as st
 
-from sentinel.config import Settings
 from sentinel.ai.triage_service import AITriageService, TriageError
-from sentinel.database.repositories import IncidentRepository
+from sentinel.config import Settings
+from sentinel.database.repositories import IncidentNotFoundError, IncidentRepository
 from sentinel.domain.enums import IncidentCategory, Severity
 from sentinel.services.incident_service import IncidentService
-from sentinel.ui.components import badge, label, safe_error
 from sentinel.time_utils import display_local
+from sentinel.ui.components import badge, escape_markdown, label, safe_error
 
 
 def render(repository: IncidentRepository, service: IncidentService, triage_service: AITriageService, settings: Settings) -> None:
@@ -15,8 +15,16 @@ def render(repository: IncidentRepository, service: IncidentService, triage_serv
     if not incident_id:
         st.info("Select an incident in the Explorer or Overview before reviewing AI triage.")
         return
-    incident = repository.get_incident(incident_id)
-    st.subheader(f"{incident.incident_id} — {incident.title}")
+    try:
+        incident = repository.get_incident(incident_id)
+    except IncidentNotFoundError:
+        # The selected incident may have been deleted (for example by the
+        # demo-record reset) since it was last opened.
+        st.session_state.pop("selected_incident_id", None)
+        st.error("This incident is no longer available.")
+        st.info("Select an incident in the Explorer or Overview before reviewing AI triage.")
+        return
+    st.subheader(f"{incident.incident_id} — {escape_markdown(incident.title)}")
     if st.button("Request reassessment" if repository.list_ai_assessments(incident_id) else "Run AI triage", type="primary", key=f"assess_{incident_id}"):
         try:
             with st.spinner("Generating an advisory assessment…"):
@@ -42,13 +50,15 @@ def render(repository: IncidentRepository, service: IncidentService, triage_serv
                     st.caption("Suggested severity")
                     badge(assessment.suggested_severity, "severity")
                 st.caption(f"Suggested category: {label(assessment.suggested_category)} · Generated {display_local(assessment.created_at)}")
-                st.markdown(f"**Summary:** {assessment.concise_summary}")
-                st.write(assessment.observed_failure_or_concern)
+                # Assessment text is model output derived from the untrusted report,
+                # so render it literally rather than letting it become links.
+                st.markdown(f"**Summary:** {escape_markdown(assessment.concise_summary)}")
+                st.write(escape_markdown(assessment.observed_failure_or_concern))
                 st.markdown("**Severity rationale**")
-                st.write(assessment.severity_explanation)
+                st.write(escape_markdown(assessment.severity_explanation))
                 st.markdown("**Recommended actions**")
                 for recommendation in assessment.recommended_corrective_actions:
-                    st.write(f"• {recommendation}")
+                    st.write(f"• {escape_markdown(recommendation)}")
     st.divider()
     st.subheader("Human review decision")
     st.caption("A reviewer remains responsible for the final severity determination.")

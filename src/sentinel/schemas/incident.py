@@ -38,6 +38,8 @@ class CreateIncident(BaseModel):
             raise ValueError("Severity and severity source must be supplied together")
         if self.occurrence_date and self.occurrence_date > self.report_date:
             raise ValueError("Occurrence date cannot be later than report date")
+        if self.report_date > date.today():
+            raise ValueError("Report date cannot be in the future")
         return self
 
 

@@ -1,23 +1,25 @@
 """Regression tests for Phase 5 production-readiness audit fixes."""
-from datetime import date, datetime, timezone
 from html import escape
 
 import pytest
 from pydantic import ValidationError
 
 from sentinel.ai.triage_service import AITriageService, DemoTriageProvider
-from sentinel.database.repositories import IncidentRepository, ALLOWED_UPDATE_COLUMNS
+from sentinel.database.repositories import ALLOWED_UPDATE_COLUMNS, IncidentRepository
 from sentinel.domain.enums import (
-    CategorySource, IncidentCategory, IncidentStatus,
-    Severity, SeveritySource,
+    IncidentCategory,
+    IncidentStatus,
+    Severity,
+    SeveritySource,
 )
 from sentinel.schemas.incident import (
-    AIAssessment, CreateIncident, IncidentUpdate, ReviewerNote,
     CorrectiveAction,
+    CreateIncident,
+    IncidentUpdate,
+    ReviewerNote,
 )
 from sentinel.services.incident_service import IncidentService
 from sentinel.services.report_service import ReportService
-from sentinel.time_utils import utc_iso
 
 
 def _payload(title: str = "Regression test incident") -> CreateIncident:
@@ -57,7 +59,7 @@ class TestRationaleColumnMapping:
 
     def test_assessment_rationale_column_stores_concern(self, repository) -> None:
         inc = repository.create_incident(_payload())
-        assessment = AITriageService(
+        AITriageService(
             repository, DemoTriageProvider()
         ).assess_incident(inc.incident_id)
         # Read the raw DB row to verify the rationale column

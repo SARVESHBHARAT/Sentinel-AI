@@ -21,6 +21,19 @@ def _value(value: str | None) -> str:
     return value.strip() if value else "Unknown / not applicable"
 
 
+def _csv_cell(value: object) -> str:
+    """Neutralise CSV formula injection.
+
+    A cell beginning with ``=``, ``+``, ``-``, ``@``, tab or carriage return is
+    executed as a formula by spreadsheet applications when the export is opened.
+    Prefixing with a single quote keeps the text but stops evaluation.
+    """
+    text = "" if value is None else str(value)
+    if text[:1] in {"=", "+", "-", "@", "\t", "\r"}:
+        return "'" + text
+    return text
+
+
 class ReportService:
     """Point-in-time report renderers. User data is escaped before PDF rendering."""
 
@@ -110,5 +123,8 @@ class ReportService:
         writer = csv.writer(output)
         writer.writerow(["Incident ID", "Title", "Category", "Severity", "Status", "Report date", "Assigned reviewer"])
         for incident in incidents:
-            writer.writerow([incident.incident_id, incident.title, _label(incident.category), _label(incident.severity), _label(incident.status), incident.report_date.isoformat(), incident.assigned_reviewer or ""])
+            writer.writerow([_csv_cell(incident.incident_id), _csv_cell(incident.title),
+                             _csv_cell(_label(incident.category)), _csv_cell(_label(incident.severity)),
+                             _csv_cell(_label(incident.status)), _csv_cell(incident.report_date.isoformat()),
+                             _csv_cell(incident.assigned_reviewer or "")])
         return output.getvalue()
