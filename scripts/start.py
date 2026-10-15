@@ -132,8 +132,8 @@ def main() -> None:
         help="Start in development mode (API + Vite HMR)",
     )
     parser.add_argument(
-        "--port", type=int, default=8000,
-        help="Port for the API/unified server (default: 8000)",
+        "--port", type=int, default=int(os.environ.get("PORT", 8000)),
+        help="Port for the API/unified server (default: $PORT or 8000)",
     )
     args = parser.parse_args()
 

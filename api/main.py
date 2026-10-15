@@ -55,6 +55,16 @@ settings = Settings.from_environment()
 repository = IncidentRepository(settings.database_path)
 repository.initialize()
 
+# If the database is empty on startup and demo mode is active, populate the synthetic demo dataset
+if settings.demo_mode or (os.getenv("SENTINEL_AUTO_SEED", "").strip().lower() in {"1", "true", "yes", "on"}):
+    try:
+        _, _total_records = repository.search_incidents(limit=1)
+        if _total_records == 0:
+            from sentinel.demo_seed import seed_demo_dataset
+            seed_demo_dataset(repository)
+    except Exception:
+        pass
+
 incident_service = IncidentService(repository)
 analytics_service = AnalyticsService(repository)
 report_service = ReportService(repository)
@@ -745,9 +755,14 @@ def get_settings() -> SettingsResponse:
 def seed_demo_data() -> dict[str, Any]:
     _assert_writable()
     try:
-        from sentinel.demo_seed import seed_demo_incidents
-        created = seed_demo_incidents(repository)
-        return {"message": f"Seeded {created} new demo record(s).", "created": created}
+        from sentinel.demo_seed import seed_demo_dataset
+        result = seed_demo_dataset(repository)
+        return {
+            "message": f"Processed demo dataset: {result.created} created, {result.skipped} existing skipped.",
+            "created": result.created,
+            "skipped": result.skipped,
+            "migrated": result.migrated,
+        }
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -825,3 +840,10 @@ else:
             "<p><a href='/api/docs' style='color:#4dd9e8'>API Documentation →</a></p>"
             "</div></body></html>"
         )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    server_port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("api.main:app", host="0.0.0.0", port=server_port)
+

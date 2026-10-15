@@ -1,12 +1,54 @@
+# Version control
 .git
 .gitignore
-.venv
-__pycache__
-*.pyc
-.pytest_cache
-.ruff_cache
+
+# Secrets and environment files
 .env
+.env.*
+!.env.example
 .streamlit/secrets.toml
+
+# Databases and Backups (preserves local data & genuine records)
+*.db
+*.db-*
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 data/*.db
 data/*.db-*
-backups
+sentinel-backup-*.db
+*backup*.db
+backups/
+
+# Python
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info/
+src/*.egg-info/
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+build/
+dist/
+
+# Node / Frontend
+node_modules
+**/node_modules
+frontend/dist
+
+# Logs
+*.log
+logs/
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db

@@ -665,3 +665,8 @@ def seed_demo_dataset(repository: IncidentRepository) -> SeedResult:
         _drive_verification(repository, service, triage, incident.incident_id, row["target"])
         _drive_status(repository, incident.incident_id, row["status_target"], row["resolution"])
     return SeedResult(created=created, skipped=skipped, migrated=migrated)
+
+
+# Backward-compatibility alias
+seed_demo_incidents = seed_demo_dataset
+
