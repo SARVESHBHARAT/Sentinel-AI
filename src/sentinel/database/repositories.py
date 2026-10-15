@@ -6,8 +6,8 @@ from typing import Any
 
 from sentinel.database.connection import DatabaseError, database_connection
 from sentinel.database.schema import initialize_schema
-from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus
-from sentinel.domain.lifecycle import validate_transition
+from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus, VerificationStatus
+from sentinel.domain.lifecycle import validate_transition, validate_verification_transition
 from sentinel.schemas.incident import (
     AIAssessment,
     AuditEvent,
@@ -27,6 +27,9 @@ ALLOWED_UPDATE_COLUMNS: frozenset[str] = frozenset({
     "category_source",
     "affected_system",
     "provider",
+    "affected_model_name",
+    "affected_model_version",
+    "verification_status",
     "occurrence_date",
     "report_date",
     "severity",
@@ -96,13 +99,21 @@ SORT_EXPRESSIONS: dict[str, str] = {
 
 
 def _incident_from_row(row: sqlite3.Row) -> Incident:
+    keys = set(row.keys())
+    verification = row["verification_status"] if "verification_status" in keys and row["verification_status"] else VerificationStatus.REPORTED.value
     return Incident(
         incident_id=row["incident_id"], title=row["title"], description=row["description"],
         category=_category(row["category"]), category_source=row["category_source"], affected_system=row["affected_system"], provider=row["provider"],
+        affected_model_name=row["affected_model_name"] if "affected_model_name" in keys else None,
+        affected_model_version=row["affected_model_version"] if "affected_model_version" in keys else None,
+        verification_status=verification,
         occurrence_date=_date(row["occurrence_date"]), report_date=date.fromisoformat(row["report_date"]),
         severity=row["severity"], severity_source=row["severity_source"],
         potential_impact=row["potential_impact"], affected_population=row["affected_population"],
-        anonymous_report=bool(row["anonymous_report"]), assigned_reviewer=row["assigned_reviewer"], resolution_summary=row["resolution_summary"],
+        anonymous_report=bool(row["anonymous_report"]),
+        reporter_name=row["reporter_name"] if "reporter_name" in keys else None,
+        reporter_contact=row["reporter_contact"] if "reporter_contact" in keys else None,
+        assigned_reviewer=row["assigned_reviewer"], resolution_summary=row["resolution_summary"],
         status=row["status"], is_demo=bool(row["is_demo"]), created_at=_dt(row["created_at"]), updated_at=_dt(row["updated_at"]),
     )
 
@@ -159,12 +170,14 @@ class IncidentRepository:
             incident_id = self._next_id(connection, datetime.fromisoformat(now).year)
             connection.execute(
                 """INSERT INTO incidents (
-                    incident_id, title, description, category, category_source, affected_system, provider, occurrence_date,
+                    incident_id, title, description, category, category_source, affected_system, provider, affected_model_name,
+                    affected_model_version, verification_status, occurrence_date,
                     report_date, severity, severity_source, potential_impact, affected_population,
                     reporter_name, reporter_contact, anonymous_report, assigned_reviewer, resolution_summary, status, is_demo, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (incident_id, payload.title, payload.description, payload.category.value, CategorySource.REPORTER.value, payload.affected_system,
-                 payload.provider, payload.occurrence_date.isoformat() if payload.occurrence_date else None,
+                 payload.provider, payload.affected_model_name, payload.affected_model_version, VerificationStatus.REPORTED.value,
+                 payload.occurrence_date.isoformat() if payload.occurrence_date else None,
                  payload.report_date.isoformat(), payload.severity.value if payload.severity else None,
                  payload.severity_source.value if payload.severity_source else None, payload.potential_impact,
                  payload.affected_population, payload.reporter_name, payload.reporter_contact,
@@ -222,6 +235,11 @@ class IncidentRepository:
         category: str | None = None,
         severity: str | None = None,
         status: str | None = None,
+        verification_status: str | None = None,
+        provider: str | None = None,
+        affected_model_name: str | None = None,
+        affected_model_version: str | None = None,
+        is_demo: bool | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
         sort_by: str = "created_at",
@@ -240,10 +258,16 @@ class IncidentRepository:
             clauses.append("(incident_id LIKE ? OR title LIKE ?)")
             term = f"%{query.strip()}%"
             values.extend((term, term))
-        for column, value in (("category", category), ("severity", severity), ("status", status)):
+        for column, value in (("category", category), ("severity", severity), ("status", status),
+                              ("verification_status", verification_status), ("provider", provider),
+                              ("affected_model_name", affected_model_name), ("affected_model_version", affected_model_version)):
             if value:
                 clauses.append(f"{column} = ?")
                 values.append(value)
+        if is_demo is not None:
+            # Dataset separation: synthetic demo records vs genuine reports.
+            clauses.append("is_demo = ?")
+            values.append(int(is_demo))
         if date_from:
             clauses.append("report_date >= ?")
             values.append(date_from.isoformat())
@@ -370,12 +394,13 @@ class IncidentRepository:
     def add_ai_assessment(self, assessment: AIAssessment) -> AIAssessment:
         now = utc_iso()
         with database_connection(self.database_path) as connection:
-            connection.execute("""INSERT INTO ai_assessments(incident_id, provider_mode, model_name, suggested_category,
+            connection.execute("""INSERT INTO ai_assessments(incident_id, provider_mode, model_name, model_version, system_fingerprint, suggested_category,
                 suggested_severity, risk_score, confidence, rationale, recommendations_json, concise_summary, observed_failure_or_concern,
                 potential_harms_json, affected_stakeholders_json, evidence_json, missing_information_json, immediate_containment_steps_json,
                 corrective_actions_json, urgent_human_review_recommended, severity_explanation, prompt_version, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (assessment.incident_id, assessment.provider_mode, assessment.model_name, assessment.suggested_category.value,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (assessment.incident_id, assessment.provider_mode, assessment.model_name, assessment.model_version, assessment.system_fingerprint,
+                 assessment.suggested_category.value,
                  assessment.suggested_severity.value, assessment.risk_score, assessment.confidence, assessment.observed_failure_or_concern,
                  json.dumps(assessment.recommended_corrective_actions), assessment.concise_summary, assessment.observed_failure_or_concern,
                  json.dumps(assessment.potential_harms), json.dumps(assessment.affected_stakeholders), json.dumps([item.model_dump() for item in assessment.evidence]),
@@ -383,7 +408,36 @@ class IncidentRepository:
                  int(assessment.urgent_human_review_recommended), assessment.severity_explanation, assessment.prompt_version, now))
             self._add_event(connection, assessment.incident_id, "ai_assessment_added", None,
                             f"Assessment source: {assessment.provider_mode}", now)
+            # Verification side-effect (reported/unverified -> ai_assessed) shares the
+            # assessment timestamp; order by row id keeps ai_assessment_added first.
+            row_check = connection.execute(
+                "SELECT verification_status FROM incidents WHERE incident_id = ?", (assessment.incident_id,)
+            ).fetchone()
+            if row_check is not None and row_check[0] in ("reported", "unverified"):
+                connection.execute("UPDATE incidents SET verification_status = 'ai_assessed', updated_at = ? WHERE incident_id = ?",
+                                   (now, assessment.incident_id))
+                self._add_event(connection, assessment.incident_id, "verification_changed", "AI triage",
+                                f"{row_check[0]} -> ai_assessed", now)
         return assessment.model_copy(update={"created_at": datetime.fromisoformat(now)})
+
+    def transition_verification(self, incident_id: str, target: VerificationStatus, actor: str | None = None) -> Incident:
+        """Change verification state; audited. AI triage callers must never pass verified."""
+        current = self.get_incident(incident_id)
+        validate_verification_transition(current.verification_status, target)
+        now = utc_iso()
+        with database_connection(self.database_path) as connection:
+            cursor = connection.execute("UPDATE incidents SET verification_status = ?, updated_at = ? WHERE incident_id = ?",
+                                        (target.value, now, incident_id))
+            if cursor.rowcount != 1:
+                raise IncidentNotFoundError(f"Incident {incident_id} was not found")
+            self._add_event(connection, incident_id, "verification_changed", actor,
+                            f"{current.verification_status.value} -> {target.value}", now)
+            row = connection.execute(
+                "SELECT * FROM incidents WHERE incident_id = ?", (incident_id,)
+            ).fetchone()
+            if row is None:
+                raise DatabaseError("Database operation failed")
+        return _incident_from_row(row)
 
     def add_reviewer_note(self, note: ReviewerNote) -> ReviewerNote:
         now = utc_iso()
@@ -416,12 +470,19 @@ class IncidentRepository:
     def list_ai_assessments(self, incident_id: str) -> list[AIAssessment]:
         with database_connection(self.database_path) as connection:
             rows = connection.execute("SELECT * FROM ai_assessments WHERE incident_id = ? ORDER BY created_at", (incident_id,)).fetchall()
-        return [AIAssessment(incident_id=row["incident_id"], provider_mode=row["provider_mode"], model_name=row["model_name"], prompt_version=row["prompt_version"],
+        assessments = []
+        for row in rows:
+            keys = set(row.keys())
+            assessments.append(AIAssessment(incident_id=row["incident_id"], provider_mode=row["provider_mode"], model_name=row["model_name"],
+                             model_version=row["model_version"] if "model_version" in keys else None,
+                             system_fingerprint=row["system_fingerprint"] if "system_fingerprint" in keys else None,
+                             prompt_version=row["prompt_version"],
                              suggested_category=row["suggested_category"], suggested_severity=row["suggested_severity"],
                              risk_score=row["risk_score"], confidence=row["confidence"], concise_summary=row["concise_summary"], observed_failure_or_concern=row["observed_failure_or_concern"],
                              potential_harms=json.loads(row["potential_harms_json"]), affected_stakeholders=json.loads(row["affected_stakeholders_json"]), evidence=json.loads(row["evidence_json"]),
                              missing_information=json.loads(row["missing_information_json"]), immediate_containment_steps=json.loads(row["immediate_containment_steps_json"]),
-                             recommended_corrective_actions=json.loads(row["corrective_actions_json"]), urgent_human_review_recommended=bool(row["urgent_human_review_recommended"]), severity_explanation=row["severity_explanation"], created_at=_dt(row["created_at"])) for row in rows]
+                             recommended_corrective_actions=json.loads(row["corrective_actions_json"]), urgent_human_review_recommended=bool(row["urgent_human_review_recommended"]), severity_explanation=row["severity_explanation"], created_at=_dt(row["created_at"])))
+        return assessments
 
     def list_reviewer_notes(self, incident_id: str) -> list[ReviewerNote]:
         with database_connection(self.database_path) as connection:

@@ -22,6 +22,8 @@ class TransientTriageError(TriageError):
 class TriageProvider(Protocol):
     mode: str
     model_name: str
+    model_version: str | None
+    system_fingerprint: str | None = None
 
     def assess(self, incident: Incident, evidence_references: list[str]) -> AIModelAssessment: ...
 
@@ -30,6 +32,8 @@ class TriageProvider(Protocol):
 class DemoTriageProvider:
     model_name: str = "sentinel-deterministic-demo-v1"
     mode: str = "demo"
+    model_version: str | None = "sentinel-deterministic-demo-v1"
+    system_fingerprint: str | None = None
 
     def assess(self, incident: Incident, evidence_references: list[str]) -> AIModelAssessment:
         text = f"{incident.title} {incident.description}".lower()
@@ -60,8 +64,13 @@ class DemoTriageProvider:
 class OpenAITriageProvider:
     mode = "openai"
 
-    def __init__(self, api_key: str, model_name: str, client: object | None = None) -> None:
+    def __init__(self, api_key: str, model_name: str, client: object | None = None,
+                 model_version_override: str | None = None) -> None:
         self.model_name = model_name
+        self.model_version_override = model_version_override
+        # Populated per assessment from reliable provider evidence only; never invented.
+        self.model_version: str | None = model_version_override
+        self.system_fingerprint: str | None = None
         if client is not None:
             self._client = client
             return
@@ -72,6 +81,12 @@ class OpenAITriageProvider:
             raise TriageError("AI triage is not available. Check the application configuration.") from error
 
     def assess(self, incident: Incident, evidence_references: list[str]) -> AIModelAssessment:
+        # Reset per-call evidence so a failed call cannot leak a prior fingerprint.
+        self.system_fingerprint = None
+        if self.model_version_override is not None:
+            self.model_version = self.model_version_override
+        else:
+            self.model_version = None
         try:
             completion = self._client.beta.chat.completions.parse(
                 model=self.model_name,
@@ -82,6 +97,14 @@ class OpenAITriageProvider:
             message = completion.choices[0].message
             if getattr(message, "refusal", None) or not getattr(message, "parsed", None):
                 raise TriageError("The AI service could not produce a valid assessment.")
+            # Capture genuine model identity when the provider returns it.
+            returned_model = getattr(completion, "model", None)
+            if isinstance(returned_model, str) and returned_model.strip() and returned_model.strip() != self.model_name:
+                self.model_name = returned_model.strip()
+            fingerprint = getattr(completion, "system_fingerprint", None)
+            if isinstance(fingerprint, str) and fingerprint.strip():
+                # Diagnostic metadata only; never presented as a model version.
+                self.system_fingerprint = fingerprint.strip()
             return AIModelAssessment.model_validate(message.parsed)
         except TriageError:
             raise
@@ -100,7 +123,11 @@ class AITriageService:
 
     @classmethod
     def from_settings(cls, repository: IncidentRepository, settings: Settings) -> "AITriageService":
-        provider: TriageProvider = DemoTriageProvider() if settings.effective_demo_mode else OpenAITriageProvider(settings.openai_api_key or "", settings.openai_model)
+        if settings.effective_demo_mode:
+            provider: TriageProvider = DemoTriageProvider()
+        else:
+            provider = OpenAITriageProvider(settings.openai_api_key or "", settings.openai_model,
+                                            model_version_override=settings.openai_model_version_override)
         return cls(repository, provider)
 
     def assess_incident(self, incident_id: str) -> AIAssessment:
@@ -109,8 +136,14 @@ class AITriageService:
         for attempt in range(self._retries + 1):
             try:
                 output = AIModelAssessment.model_validate(self._provider.assess(incident, evidence))
-                assessment = AIAssessment(incident_id=incident_id, provider_mode=self._provider.mode, model_name=self._provider.model_name, prompt_version=PROMPT_VERSION, **output.model_dump())
-                return self._repository.add_ai_assessment(assessment)
+                assessment = AIAssessment(incident_id=incident_id, provider_mode=self._provider.mode, model_name=self._provider.model_name,
+                                          model_version=getattr(self._provider, "model_version", None),
+                                          system_fingerprint=getattr(self._provider, "system_fingerprint", None),
+                                          prompt_version=PROMPT_VERSION, **output.model_dump())
+                stored = self._repository.add_ai_assessment(assessment)
+                # Verification side-effect lives in add_ai_assessment (same
+                # transaction, reported/unverified -> ai_assessed, never verified).
+                return stored
             except TransientTriageError:
                 if attempt == self._retries:
                     raise

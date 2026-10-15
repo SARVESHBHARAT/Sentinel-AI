@@ -140,6 +140,8 @@ class TestAuditEventConsistency:
 
         events = repository.list_audit_events(inc.incident_id)
         event_types = [e.event_type for e in events]
+        # AI triage also records the audited reported -> ai_assessed verification
+        # side-effect (never verified); ordering is by timestamp then row id.
         assert event_types == [
             "incident_created",
             "incident_updated",
@@ -147,6 +149,7 @@ class TestAuditEventConsistency:
             "reviewer_note_added",
             "corrective_action_added",
             "ai_assessment_added",
+            "verification_changed",
         ]
         # All events have UTC-aware timestamps
         for event in events:

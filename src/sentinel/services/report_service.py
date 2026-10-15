@@ -17,6 +17,15 @@ def _label(value: object | None) -> str:
     return getattr(value, "value", str(value)).replace("_", " ").title()
 
 
+REDACTED = "[redacted]"
+
+
+def _reporter(value: str | None, redact: bool) -> str:
+    if redact:
+        return REDACTED if value else "Unknown / not applicable"
+    return value.strip() if value else "Unknown / not applicable"
+
+
 def _value(value: str | None) -> str:
     return value.strip() if value else "Unknown / not applicable"
 
@@ -40,7 +49,7 @@ class ReportService:
     def __init__(self, repository: IncidentRepository) -> None:
         self._repository = repository
 
-    def markdown(self, incident_id: str) -> str:
+    def markdown(self, incident_id: str, redact_reporter: bool = False) -> str:
         incident = self._repository.get_incident(incident_id)
         assessments = self._repository.list_ai_assessments(incident_id)
         notes = self._repository.list_reviewer_notes(incident_id)
@@ -53,19 +62,31 @@ class ReportService:
         lines = [
             "# Sentinel AI Incident Report", "", f"**Incident ID:** {incident.incident_id}", f"**Title:** {incident.title}",
             f"**Generated (UTC):** {datetime.now(timezone.utc).isoformat()}", "**Snapshot notice:** This export is a point-in-time snapshot.", "",
+        ]
+        if incident.is_demo:
+            lines.extend([
+                "**Record type:** SYNTHETIC DEMO DATA — a fictional demonstration record. "
+                "It does not describe a real event and is not evidence of real model behaviour.", "",
+            ])
+        lines.extend([
             "## Executive summary", _value(latest.concise_summary if latest else None), "",
             "## Original report", f"**Description:** {_value(incident.description)}", f"**Reported:** {incident.report_date.isoformat()}",
             f"**Occurrence date:** {incident.occurrence_date.isoformat() if incident.occurrence_date else 'Unknown / not applicable'}", "",
-            "## Affected AI system", f"**System:** {_value(incident.affected_system)}", f"**Provider:** {_value(incident.provider)}", "",
+            "## Affected AI system", f"**System:** {_value(incident.affected_system)}", f"**Provider:** {_value(incident.provider)}",
+            f"**Affected model:** {_value(incident.affected_model_name)}", f"**Affected model version:** {_value(incident.affected_model_version)}", "",
             "## Classification and severity", f"**AI suggestion:** Category — {ai_category}; Severity — {ai_severity}",
             f"**Human/current determination:** Category — {_label(incident.category)} ({_label(incident.category_source)}); Severity — {_label(incident.severity)} ({_label(incident.severity_source)})", "",
             "## Potential impact and stakeholders", _value(incident.potential_impact), f"**Affected stakeholders/population:** {_value(incident.affected_population)}", "",
             "## Supporting evidence", *([f"- {item}" for item in evidence] or ["- Unknown / not applicable"]), "",
             "## AI assessment and limitations",
-        ]
+        ])
         if latest:
+            model_line = f"**Model:** {latest.model_name}"
+            if latest.model_version:
+                model_line += f" (version: {latest.model_version})"
+            model_line += f"; **Timestamp:** {latest.created_at.isoformat() if latest.created_at else 'Unknown'}; **Mode:** {latest.provider_mode}"
             lines.extend([
-                f"**Model:** {latest.model_name}; **Timestamp:** {latest.created_at.isoformat() if latest.created_at else 'Unknown'}; **Mode:** {latest.provider_mode}",
+                model_line,
                 f"**Observed concern:** {latest.observed_failure_or_concern}", f"**Severity explanation:** {latest.severity_explanation}",
                 "**Missing information / limitations:**", *([f"- {item}" for item in latest.missing_information] or ["- Unknown / not applicable"]),
             ])
@@ -77,10 +98,14 @@ class ReportService:
         lines.extend([f"- {note.author or 'Reviewer'}: {note.body}" for note in notes] or ["- No notes recorded"])
         lines.extend(["", "## Corrective and preventive actions"])
         lines.extend([f"- [{action.action_kind}] [{action.status}] {action.title} — {action.owner or 'Unassigned'}" for action in actions] or ["- No actions recorded"])
-        lines.extend(["", "## Status and resolution", f"**Current status:** {_label(incident.status)}", f"**Resolution summary:** {_value(incident.resolution_summary)}"])
+        lines.extend(["", "## Status and resolution", f"**Current status:** {_label(incident.status)}",
+                      f"**Verification:** {_label(incident.verification_status)}",
+                      f"**Resolution summary:** {_value(incident.resolution_summary)}",
+                      f"**Reporter:** {_reporter(incident.reporter_name, redact_reporter)}",
+                      f"**Reporter contact:** {_reporter(incident.reporter_contact, redact_reporter)}"])
         return "\n".join(lines)
 
-    def pdf(self, incident_id: str) -> bytes:
+    def pdf(self, incident_id: str, redact_reporter: bool = False) -> bytes:
         try:
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import A4
@@ -89,7 +114,7 @@ class ReportService:
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
         except ImportError as error:
             raise RuntimeError("PDF export is unavailable because ReportLab is not installed.") from error
-        markdown = self.markdown(incident_id)
+        markdown = self.markdown(incident_id, redact_reporter=redact_reporter)
         buffer = BytesIO()
         styles = getSampleStyleSheet()
         body = ParagraphStyle("SentinelBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, leading=13, spaceAfter=5)

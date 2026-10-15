@@ -1,0 +1,18 @@
+services:
+  sentinel:
+    build: .
+    ports:
+      - "8501:8501"
+    # Optional local overrides (copy .env.example to .env to customize).
+    # Compose must also validate on machines without a .env file.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SENTINEL_DATABASE_PATH: /app/data/sentinel.db
+    volumes:
+      - sentinel-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  sentinel-data:

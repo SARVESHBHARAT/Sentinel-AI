@@ -3,10 +3,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus, Severity, SeveritySource
+from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus, Severity, SeveritySource, VerificationStatus
 
 ShortText = Annotated[str, Field(min_length=1, max_length=300)]
 LongText = Annotated[str, Field(min_length=1, max_length=10_000)]
+ModelName = Annotated[str, Field(min_length=1, max_length=200)]
+ModelVersion = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")]
 
 
 class CreateIncident(BaseModel):
@@ -17,6 +19,8 @@ class CreateIncident(BaseModel):
     category: IncidentCategory
     affected_system: str | None = Field(default=None, max_length=200)
     provider: str | None = Field(default=None, max_length=200)
+    affected_model_name: ModelName | None = None
+    affected_model_version: ModelVersion | None = None
     occurrence_date: date | None = None
     report_date: date = Field(default_factory=date.today)
     severity: Severity | None = None
@@ -52,6 +56,9 @@ class IncidentUpdate(BaseModel):
     category_source: CategorySource | None = None
     affected_system: str | None = Field(default=None, max_length=200)
     provider: str | None = Field(default=None, max_length=200)
+    affected_model_name: ModelName | None = Field(default=None, max_length=200)
+    affected_model_version: ModelVersion | None = Field(default=None, max_length=100)
+    verification_status: VerificationStatus | None = None
     occurrence_date: date | None = None
     report_date: date | None = None
     severity: Severity | None = None
@@ -72,6 +79,9 @@ class Incident(BaseModel):
     category_source: CategorySource = CategorySource.REPORTER
     affected_system: str | None
     provider: str | None
+    affected_model_name: str | None = None
+    affected_model_version: str | None = None
+    verification_status: VerificationStatus = VerificationStatus.REPORTED
     occurrence_date: date | None
     report_date: date
     severity: Severity | None
@@ -79,6 +89,8 @@ class Incident(BaseModel):
     potential_impact: str | None
     affected_population: str | None
     anonymous_report: bool
+    reporter_name: str | None = None
+    reporter_contact: str | None = None
     assigned_reviewer: str | None
     resolution_summary: str | None
     status: IncidentStatus
@@ -118,6 +130,11 @@ class AIAssessment(AIModelAssessment):
     incident_id: str
     provider_mode: str = Field(pattern="^(openai|demo)$")
     model_name: str = Field(min_length=1, max_length=100)
+    # Exact version/snapshot of the *assessing* model (not the reported system).
+    # None when the provider does not return reliable version evidence; never invented.
+    model_version: str | None = Field(default=None, max_length=100)
+    # Provider diagnostic fingerprint; stored separately, never presented as a version.
+    system_fingerprint: str | None = Field(default=None, max_length=100)
     prompt_version: str = Field(min_length=1, max_length=100)
     created_at: datetime | None = None
 

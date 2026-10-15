@@ -3,16 +3,17 @@
 import streamlit as st
 
 from sentinel.database.repositories import IncidentRepository
-from sentinel.domain.enums import IncidentCategory, IncidentStatus, Severity
+from sentinel.domain.enums import IncidentCategory, IncidentStatus, Severity, VerificationStatus
 from sentinel.ui.components import choose_incident, enum_label, incident_rows, label
+from sentinel.ui.styles import page_header, result_line
 
 
 PAGE_SIZE = 25
 
 
 def render(repository: IncidentRepository, open_incident: callable) -> None:
-    st.title("Incident Explorer")
-    st.markdown('<p class="sentinel-subtitle">Search the incident register and open an active case record.</p>', unsafe_allow_html=True)
+    page_header("Investigation", "Incident Explorer",
+                "Search the incident register with precise filters and open a case record for review.")
     with st.form("explorer_filters"):
         row1 = st.columns(4)
         query = row1[0].text_input("Search", placeholder="Incident ID or title")
@@ -22,16 +23,25 @@ def render(repository: IncidentRepository, open_incident: callable) -> None:
         row2 = st.columns(4)
         date_from = row2[0].date_input("Reported from", value=None)
         date_to = row2[1].date_input("Reported to", value=None)
-        sort_by = row2[2].selectbox("Sort by", ["created_at", "updated_at", "report_date", "title", "severity", "status"], format_func=lambda value: label(value))
-        descending = row2[3].checkbox("Newest / highest first", value=True)
+        verification = row2[2].selectbox("Verification", ["all"] + [item.value for item in VerificationStatus],
+                                         format_func=lambda value: "All" if value == "all" else label(value))
+        provider = row2[3].text_input("Provider contains", placeholder="Optional")
+        row3 = st.columns(3)
+        sort_by = row3[0].selectbox("Sort by", ["created_at", "updated_at", "report_date", "title", "severity", "status"], format_func=lambda value: label(value))
+        descending = row3[1].checkbox("Newest / highest first", value=True)
         applied = st.form_submit_button("Apply filters", type="primary")
     if applied:
         st.session_state["explorer_page"] = 0
     page = st.session_state.get("explorer_page", 0)
     incidents, total = repository.search_incidents(query=query or None, category=None if category == "all" else category,
         severity=None if severity == "all" else severity, status=None if status == "all" else status,
+        verification_status=None if verification == "all" else verification,
         date_from=date_from, date_to=date_to, sort_by=sort_by, descending=descending, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
-    st.caption(f"{total} incident{'s' if total != 1 else ''} found")
+    if (provider or "").strip():
+        needle = provider.strip().lower()
+        incidents = [item for item in incidents if needle in (item.provider or "").lower()]
+        total = len(incidents)
+    result_line(f"{total} incident{'s' if total != 1 else ''} found · page {page + 1} of {max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)}")
     if not incidents:
         st.info("No incidents match these filters. Try broadening the search or submit a new incident.")
         return
@@ -41,7 +51,7 @@ def render(repository: IncidentRepository, open_incident: callable) -> None:
     if left.button("Previous", disabled=page == 0, key="explorer_previous"):
         st.session_state["explorer_page"] = page - 1
         st.rerun()
-    middle.markdown(f"<div style='text-align:center'>Page {page + 1} of {pages}</div>", unsafe_allow_html=True)
+    middle.markdown(f"<div style='text-align:center; color:#8A8A8A; font-size:0.85rem; padding-top:0.35rem'>Page {page + 1} of {pages}</div>", unsafe_allow_html=True)
     if right.button("Next", disabled=page + 1 >= pages, key="explorer_next"):
         st.session_state["explorer_page"] = page + 1
         st.rerun()

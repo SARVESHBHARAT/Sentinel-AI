@@ -1,5 +1,5 @@
 from sentinel.database.repositories import IncidentRepository
-from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus, Severity, SeveritySource
+from sentinel.domain.enums import CategorySource, IncidentCategory, IncidentStatus, Severity, SeveritySource, VerificationStatus
 from sentinel.schemas.incident import AIAssessment, CorrectiveAction, CreateIncident, Incident, IncidentUpdate, ReviewerNote
 
 
@@ -47,4 +47,51 @@ class IncidentService:
                 incident_id=incident_id, author=reviewer or "Reviewer",
                 body=f"AI triage override justification: {justification.strip()}",
             ))
+        # Recording a human determination moves ai_assessed -> human_reviewed (never verified).
+        current = self._repository.get_incident(incident_id)
+        if current.verification_status == VerificationStatus.AI_ASSESSED:
+            try:
+                self._repository.transition_verification(incident_id, VerificationStatus.HUMAN_REVIEWED, actor=reviewer or "Reviewer")
+            except ValueError:
+                pass
+            return self._repository.get_incident(incident_id)
         return updated
+
+    def verify(self, incident_id: str, reviewer: str | None, justification: str | None) -> Incident:
+        """Mark human_reviewed/disputed -> verified. Requires reviewer + justification; audited."""
+        if not (reviewer or "").strip():
+            raise ValueError("A reviewer name is required to verify an incident")
+        if not (justification or "").strip():
+            raise ValueError("A justification is required to verify an incident")
+        incident = self._repository.transition_verification(incident_id, VerificationStatus.VERIFIED, actor=reviewer)
+        self._repository.add_reviewer_note(ReviewerNote(
+            incident_id=incident_id, author=reviewer,
+            body=f"Verification justification: {justification.strip()}",
+        ))
+        return incident
+
+    def dispute(self, incident_id: str, reviewer: str | None, justification: str | None) -> Incident:
+        """Flag an incident as disputed. Requires reviewer + justification; audited."""
+        if not (reviewer or "").strip():
+            raise ValueError("A reviewer name is required to dispute an incident")
+        if not (justification or "").strip():
+            raise ValueError("A justification is required to dispute an incident")
+        incident = self._repository.transition_verification(incident_id, VerificationStatus.DISPUTED, actor=reviewer)
+        self._repository.add_reviewer_note(ReviewerNote(
+            incident_id=incident_id, author=reviewer,
+            body=f"Dispute justification: {justification.strip()}",
+        ))
+        return incident
+
+    def mark_unverified(self, incident_id: str, reviewer: str | None, justification: str | None) -> Incident:
+        """Mark a report as not verifiable. Requires reviewer + justification; audited."""
+        if not (reviewer or "").strip():
+            raise ValueError("A reviewer name is required to mark an incident unverified")
+        if not (justification or "").strip():
+            raise ValueError("A justification is required to mark an incident unverified")
+        incident = self._repository.transition_verification(incident_id, VerificationStatus.UNVERIFIED, actor=reviewer)
+        self._repository.add_reviewer_note(ReviewerNote(
+            incident_id=incident_id, author=reviewer,
+            body=f"Unverified justification: {justification.strip()}",
+        ))
+        return incident

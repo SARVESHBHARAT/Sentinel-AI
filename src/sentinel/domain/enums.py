@@ -43,3 +43,20 @@ class Severity(str, Enum):
 class SeveritySource(str, Enum):
     HUMAN = "human"
     AI_SUGGESTION = "ai_suggestion"
+
+
+class VerificationStatus(str, Enum):
+    """Independent verification lifecycle (separate from IncidentStatus).
+
+    Lifecycle: reported -> ai_assessed -> human_reviewed -> verified | disputed.
+    ``unverified`` is a terminal marker for reports deemed not verifiable;
+    historical rows lacking verification info are read as ``reported``.
+    AI triage may only move reported/unverified -> ai_assessed, never to verified.
+    """
+
+    REPORTED = "reported"
+    AI_ASSESSED = "ai_assessed"
+    HUMAN_REVIEWED = "human_reviewed"
+    VERIFIED = "verified"
+    DISPUTED = "disputed"
+    UNVERIFIED = "unverified"

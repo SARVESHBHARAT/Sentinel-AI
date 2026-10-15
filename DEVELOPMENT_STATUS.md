@@ -1,6 +1,118 @@
 # Sentinel AI — Development Status
 
-_Last updated: Phase 5 (production-readiness audit & defect fixes)._
+_Last updated: Phase 10 (on-page incident selection fix — verified: 99 passed, ruff clean)._
+
+## Phase 10 — implemented and verified
+
+- **Root cause fixed**: Incident Details and AI Triage previously dead-ended on
+  "Select an incident…" whenever `selected_incident_id` was unset (fresh session
+  or browser refresh) — no on-page selector existed. Secondary cause: a leaked
+  `SENTINEL_DATABASE_PATH` env var in the dev terminal pointed the running app at
+  a temp DB instead of `data/sentinel.db`; the app now runs with a clean env and
+  the dev DB was re-seeded (30 incidents: 1 genuine + 29 synthetic).
+- **Fix**: new reusable `fetch_incident_options` / `incident_picker` in
+  `ui/components.py`; both pages render a visible selector (ID — Title) backed by
+  `search_incidents`, default to the current selection when valid, persist changes
+  to `selected_incident_id` and rerun, recover from stale IDs, and show an empty
+  state with a "Report an incident" navigation button. AI Triage shows incident
+  status/severity and disables the triage action under `SENTINEL_READ_ONLY`.
+- Tests: `tests/test_incident_selection.py` (9 AppTest-based tests). Verified:
+  **99 passed**, `ruff check --select E4,E7,E9,F` clean, compileall clean.
+
+---
+
+_Last updated: Phase 9 (AI Model Observatory + synthetic demo dataset — verified: 90 passed, ruff clean)._
+
+## Phase 9 — implemented and verified
+
+- **AI Model Observatory** (`ui/pages/model_intelligence.py`): dataset selector
+  (all / synthetic demo / genuine), global overview metrics (totals, distinct
+  providers/models/versions, verified, disputed, high/critical, synthetic count),
+  sortable exact-model leaderboard (rank only for count-based sorts; verification
+  rate shown as "verified ÷ total"), model drill-down with per-version stats and
+  reported-vs-verified charts, side-by-side comparison workspace. All metrics are
+  report counts — no usage-adjusted rates, no safety scores, unknown versions
+  never merged; below `SENTINEL_MODEL_INTEL_MIN_SAMPLE` the UI shows
+  "Insufficient data for comparison".
+- **Synthetic demo dataset** (`demo_seed.py`): 29 deterministic fictional
+  `[DEMO]` incidents across 5 demo providers, 9 model identifiers, 10 version
+  slots (incl. unknown version/provider slots), spread over 10 months, with demo
+  triage assessments and audited verification-state chains. Idempotent via
+  existing-title skip; seeded only with `is_demo=True`; exports labelled
+  "SYNTHETIC DEMO DATA"; reset removes demo records only. Settings → "Seed
+  synthetic demo dataset" button (disabled in read-only mode).
+- Repository: `search_incidents` gained `is_demo` filter (parameterized).
+- Report service: synthetic-demo label line in Markdown/PDF exports.
+- Tests: `tests/test_observatory.py` (18 tests). Verified: **90 passed**,
+  `ruff check --select E4,E7,E9,F` clean, compileall clean.
+
+---
+
+_Last updated: Phase 8 (CSS rendering regression fix)._
+
+## Phase 7 — implemented and verified
+
+- Report form collects provider, affected model name/version (optional, validated; unknown
+  allowed); persists via `CreateIncident`; historical records without metadata still open.
+- New Model Intelligence page (`ui/pages/model_intelligence.py`, in sidebar): live
+  `ModelIntelligenceService` metrics, provider → model → version drill-down, severity/
+  category/verification charts, period + provider/model/version/severity/category/
+  verification filters, empty states, Unknown grouping, insufficient-data warning with
+  formula `share_of_matching_reports = group_count / total_matching_reports`; no safety
+  rankings, no usage rates; demo records labelled.
+- Incident Details verification UI: current-status badge, allowed-next-states, required
+  reviewer + reason, verify/dispute/mark-unverified via `IncidentService`, invalid
+  transitions show errors, `verification_changed` history from audit events, stale
+  selections handled, refresh on success. Typed reviewer names flagged as unauthenticated.
+- Explorer adds verification + provider filters; reports include affected model/version,
+  assessing-model version, verification status, and optional reporter-PII redaction
+  (`[redacted]`, stored data unchanged); `Incident` now exposes reporter fields.
+- Hardening: `SENTINEL_READ_ONLY` enforced at service + repository layers (tested for
+  every write path); in-memory submission throttle
+  (`SENTINEL_SUBMISSION_RATE_LIMIT/WINDOW`, documented limits); SQL/CSV/XSS/safe-error
+  protections retained; no fake auth — external auth documented (Cloud ACL, oauth2-proxy,
+  VPN).
+- Deployment: `Dockerfile`, `docker-compose.yml` (persistent `sentinel-data` volume),
+  `.env.example` placeholders, `scripts/backup_db.py` (SQLite online backup + rotation),
+  restore/scheduling/retention docs, deployment-prerequisites section.
+- Tests: `tests/test_phase7_integration.py` (8 tests: submit with/without metadata,
+  filters, verification audit, redaction, read-only blocks, backup script, severity).
+  Verified: `70 passed`, `ruff check --select E4,E7,E9,F` clean.
+  Docker: CLI present (`29.7.2`) but daemon not running → `docker build` NOT validated
+  (connection error to dockerDesktopLinuxEngine pipe).
+
+## Phase 6 — implemented and verified (backend only, no dashboard UI)
+
+- Additive migrations: `incidents.affected_model_name`, `incidents.affected_model_version`,
+  `incidents.verification_status` (default `reported`), `ai_assessments.model_version`,
+  `ai_assessments.system_fingerprint`; new indexes on provider, affected model, verification.
+  Legacy databases open without data loss; historical rows read as `reported` (never verified).
+- Verification lifecycle (`domain/lifecycle.py`, separate from `IncidentStatus`):
+  `reported -> ai_assessed -> human_reviewed -> verified | disputed`, plus `unverified`
+  for not-verifiable reports. AI triage moves `reported/unverified -> ai_assessed` only
+  (inside the `add_ai_assessment` transaction, audited as `verification_changed`).
+  `IncidentService.verify/dispute/mark_unverified` require reviewer + justification and
+  write reviewer notes; invalid transitions raise `ValueError`.
+- Assessment vs affected model are separate: `AIAssessment.model_name/model_version/`
+  `system_fingerprint` describe the *assessing* provider; `Incident.affected_model_name/`
+  `affected_model_version` describe the *reported* system. OpenAI captures the returned
+  `completion.model` and `system_fingerprint` (fingerprint never presented as a version);
+  `SENTINEL_OPENAI_MODEL_VERSION` override stored only when set; demo stays
+  `sentinel-deterministic-demo-v1`. No version is ever invented.
+- New `services/model_intelligence_service.py`: `summary/groups/compare` by provider,
+  affected model/version, dates, category, verification status; unknown values grouped
+  as `Unknown` without merging into known versions; `compare()` returns
+  `sufficient_data=False` + explicit insufficient-data note below `min_sample`
+  (default 5, via `SENTINEL_MODEL_INTEL_MIN_SAMPLE`). Formula documented:
+  `share_of_matching_reports = group_count / total_matching_reports` — reported counts
+  only, no usage denominators, no safety scores, AI output never treated as verification.
+- Tests: `tests/test_model_intelligence.py` (16 tests) + 1 updated Phase 5 audit
+  expectation. Verified: `62 passed`, `ruff check --select E4,E7,E9,F` clean.
+- Not built (next phase): Model Intelligence dashboard UI, verification buttons in
+  Details/Triage pages, report-form affected-model fields, comprehensive QA, security
+  hardening, deployment preparation.
+
+---
 
 Sentinel AI (a.k.a. ERA IncidentGuard) is a Streamlit application for the ethical and
 responsible reporting, triage, and governance of AI-system incidents. This document is a
@@ -164,6 +276,8 @@ Key environment variables (all optional):
 | `SENTINEL_DEMO_MODE`     | `true`               | Force deterministic offline (demo) assessments.    |
 | `SENTINEL_OPENAI_MODEL`  | `gpt-4.1-mini`       | Model used when live triage is enabled.            |
 | `OPENAI_API_KEY`         | *(unset)*            | When set and demo mode off, enables live AI triage.|
+| `SENTINEL_OPENAI_MODEL_VERSION` | *(unset)* | Explicit assessing-model version override (stored only when set; never invented).|
+| `SENTINEL_MODEL_INTEL_MIN_SAMPLE` | `5` | Minimum matching reports before a model comparison reports sufficient data. |
 
 If `OPENAI_API_KEY` is unset, `effective_demo_mode` is automatically `True`.
 
