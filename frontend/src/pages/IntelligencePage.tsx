@@ -24,7 +24,8 @@ import type {
   ModelDetail,
   EnumsResponse,
 } from '../api/client';
-import { PageHeader, LoadingSkeleton, ErrorState, DemoBadge } from '../components/ui';
+import { PageHeader, LoadingSkeleton, ErrorState } from '../components/ui';
+import { displayTitle } from '../utils/format';
 
 export default function IntelligencePage() {
   const navigate = useNavigate();
@@ -547,10 +548,9 @@ export default function IntelligencePage() {
                         <div style={{ maxWidth: '80%' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{inc.incident_id}</span>
-                            {inc.is_demo && <DemoBadge />}
                           </div>
                           <div style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {inc.title}
+                            {displayTitle(inc.title)}
                           </div>
                         </div>
                         <ChevronRight size={14} color="var(--text-muted)" />

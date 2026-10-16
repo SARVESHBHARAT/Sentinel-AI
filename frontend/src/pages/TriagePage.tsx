@@ -6,7 +6,7 @@ import type { Incident, AIAssessment } from '../api/client';
 import { PageHeader, LoadingSkeleton } from '../components/ui';
 import {
   formatCategory, formatDateTime,
-  statusBadgeClass, verificationBadgeClass,
+  statusBadgeClass, verificationBadgeClass, displayTitle,
 } from '../utils/format';
 
 export default function TriagePage() {
@@ -152,7 +152,7 @@ export default function TriagePage() {
                     }}
                   >
                     <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', marginBottom: '0.25rem' }}>{inc.incident_id}</div>
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inc.title}</div>
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayTitle(inc.title)}</div>
                     <div style={{ display: 'flex', gap: '0.375rem', marginTop: '0.375rem', flexWrap: 'wrap' }}>
                       <span className={statusBadgeClass(inc.status)} style={{ fontSize: '0.65rem', padding: '0.1rem 0.375rem' }}>{inc.status}</span>
                       <span className={verificationBadgeClass(inc.verification_status)} style={{ fontSize: '0.65rem', padding: '0.1rem 0.375rem' }}>{inc.verification_status}</span>
@@ -184,7 +184,7 @@ export default function TriagePage() {
                   <span className={verificationBadgeClass(incident.verification_status)}>{incident.verification_status}</span>
                   {incident.severity && <span className={severityBadgeClass(incident.severity)}>{incident.severity}</span>}
                 </div>
-                <h4 style={{ marginBottom: '0.5rem' }}>{incident.title}</h4>
+                <h4 style={{ marginBottom: '0.5rem' }}>{displayTitle(incident.title)}</h4>
                 <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: '0 0 0.75rem 0', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                   {incident.description}
                 </p>
@@ -206,7 +206,7 @@ export default function TriagePage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                     <h4>Latest Assessment</h4>
                     <span className="badge badge-violet">
-                      {latestAssessment.provider_mode === 'demo' ? 'Demo Provider' : 'AI Provider'}
+                      {latestAssessment.provider_mode === 'demo' ? 'Automated Engine' : 'AI Provider'}
                     </span>
                     {assessments.length > 1 && (
                       <span className="badge badge-neutral">{assessments.length} assessments total</span>

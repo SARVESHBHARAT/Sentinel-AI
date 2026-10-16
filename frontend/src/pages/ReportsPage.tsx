@@ -11,6 +11,7 @@ import {
 import api from '../api/client';
 import type { Incident } from '../api/client';
 import { PageHeader, LoadingSkeleton, ErrorState } from '../components/ui';
+import { displayTitle } from '../utils/format';
 
 export default function ReportsPage() {
   const [searchParams] = useSearchParams();
@@ -138,7 +139,7 @@ export default function ReportsPage() {
               >
                 {incidents.map((inc) => (
                   <option key={inc.incident_id} value={inc.incident_id}>
-                    {inc.incident_id} — {inc.title.slice(0, 50)} {inc.is_demo ? '(DEMO)' : ''}
+                    {inc.incident_id} — {displayTitle(inc.title).slice(0, 50)}
                   </option>
                 ))}
               </select>

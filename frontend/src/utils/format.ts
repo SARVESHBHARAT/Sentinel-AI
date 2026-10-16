@@ -133,6 +133,16 @@ export function formatRelativeTime(value: string | null | undefined): string {
   }
 }
 
+// ─── Title display helpers ────────────────────────────────────────────────────
+
+/**
+ * Strips the `[DEMO]` prefix from incident titles for cleaner display.
+ * The underlying data retains the prefix — this is presentation-only.
+ */
+export function displayTitle(title: string): string {
+  return title.replace(/^\[DEMO\]\s*/i, '');
+}
+
 // ─── Misc ─────────────────────────────────────────────────────────────────────
 
 export function truncate(text: string, maxLen = 80): string {

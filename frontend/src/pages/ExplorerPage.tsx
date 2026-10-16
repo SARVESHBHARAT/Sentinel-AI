@@ -5,10 +5,10 @@ import api from '../api/client';
 import type { Incident } from '../api/client';
 import {
   PageHeader, LoadingSkeleton, ErrorState, EmptyState,
-  Pagination, DemoBadge,
+  Pagination,
 } from '../components/ui';
 import {
-  formatDate, formatCategory, formatLabel,
+  formatDate, formatCategory, formatLabel, displayTitle,
   severityBadgeClass, verificationBadgeClass, statusBadgeClass,
 } from '../utils/format';
 
@@ -269,11 +269,11 @@ export default function ExplorerPage() {
                       <tr key={inc.incident_id} onClick={() => navigate(`/incidents/${inc.incident_id}`)}>
                         <td>
                           <span className="incident-id">{inc.incident_id}</span>
-                          {inc.is_demo && <DemoBadge />}
+
                         </td>
                         <td style={{ maxWidth: 300 }}>
                           <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.875rem' }}>
-                            {inc.title}
+                            {displayTitle(inc.title)}
                           </div>
                         </td>
                         <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{formatCategory(inc.category)}</td>

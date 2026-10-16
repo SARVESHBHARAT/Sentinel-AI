@@ -2,8 +2,11 @@ import { useRef, useEffect, useState, useCallback, Suspense, lazy } from 'react'
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, Shield, BarChart3, Zap, Activity } from 'lucide-react';
+import { displayTitle } from '../utils/format';
 import api from '../api/client';
 import type { OverviewResponse } from '../api/client';
+
+import IncidentStoriesCarousel from '../components/IncidentStoriesCarousel';
 
 // Lazy-load the heavy Three.js scene
 const HeroScene = lazy(() => import('../components/HeroScene'));
@@ -353,6 +356,9 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── AI INCIDENT STORIES (ROTATING CAROUSEL) ── */}
+      <IncidentStoriesCarousel />
+
       {/* ── RECENT INCIDENTS ── */}
       {recentIncidents.length > 0 && (
         <section
@@ -419,13 +425,13 @@ export default function HomePage() {
                         textOverflow: 'ellipsis',
                       }}
                     >
-                      {inc.title}
+                      {displayTitle(inc.title)}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
                       {inc.provider ?? 'Unknown provider'} · {inc.report_date}
                     </div>
                   </div>
-                  {inc.is_demo && <span className="demo-label">DEMO</span>}
+
                   {inc.severity && (
                     <span
                       className={`badge badge-${inc.severity === 'critical' ? 'critical' : inc.severity === 'high' ? 'high' : inc.severity === 'medium' ? 'medium' : 'low'}`}

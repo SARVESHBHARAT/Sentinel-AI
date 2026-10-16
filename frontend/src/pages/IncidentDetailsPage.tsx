@@ -7,11 +7,11 @@ import {
 import api from '../api/client';
 import type { Incident, AIAssessment, ActivityResponse } from '../api/client';
 import {
-  LoadingSkeleton, ErrorState, DemoBadge, Breadcrumb,
+  LoadingSkeleton, ErrorState, Breadcrumb,
 } from '../components/ui';
 import {
   formatDate, formatDateTime, formatCategory, formatLabel, formatVerification,
-  formatStatus, verificationBadgeClass, statusBadgeClass,
+  formatStatus, verificationBadgeClass, statusBadgeClass, displayTitle,
 } from '../utils/format';
 
 export default function IncidentDetailsPage() {
@@ -196,10 +196,9 @@ export default function IncidentDetailsPage() {
             <span className="incident-id" style={{ fontSize: '0.875rem' }}>{incident.incident_id}</span>
             <span className={statusBadgeClass(incident.status)}>{formatStatus(incident.status)}</span>
             <span className={verificationBadgeClass(incident.verification_status)}>{formatVerification(incident.verification_status)}</span>
-            {incident.is_demo && <DemoBadge />}
           </div>
           <h1 style={{ fontSize: 'clamp(1.25rem, 2.5vw, 1.875rem)', fontWeight: 700, letterSpacing: '-0.025em', marginBottom: '0.375rem' }}>
-            {incident.title}
+            {displayTitle(incident.title)}
           </h1>
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
             <span>Reported: {formatDate(incident.report_date)}</span>

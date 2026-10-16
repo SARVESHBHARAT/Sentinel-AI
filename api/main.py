@@ -12,6 +12,7 @@ Production:   cd frontend && npm run build
 """
 from __future__ import annotations
 
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -817,6 +818,12 @@ if _FRONTEND_BUILD.is_dir():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str) -> FileResponse:
         """Serve the React SPA. Returns index.html for all non-API routes."""
+        # Never intercept unmatched API routes with index.html; return 404 JSON instead
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"API endpoint '/{full_path}' not found",
+            )
         # Check if the requested file exists as a static asset in the build
         file_path = _FRONTEND_BUILD / full_path
         if full_path and file_path.is_file():
